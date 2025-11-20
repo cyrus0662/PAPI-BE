@@ -15,7 +15,7 @@ const app = express();
 
 connectDB();
 
-app.use(cors({ origin: process.env.NEXT_PUBLIC_API_URL}));
+app.use(cors());
 
 app.use(express.json());
 app.use('/uploads', express.static('uploads'));
