@@ -1,6 +1,5 @@
 const jwt = require("jsonwebtoken");
-const Buyer = require("../models/Buyer");
-const Seller = require("../models/Seller");
+const User = require("../models/User");
 const Admin = require("../models/Admin");
 
 const authMiddleware = async (req, res, next) => {
@@ -17,15 +16,20 @@ const authMiddleware = async (req, res, next) => {
 
     req.user = { id: decoded.id, role: decoded.role };
 
-    if (decoded.role === "buyer")
-  req.userDoc = await Buyer.findById(decoded.id).select("-password");
-
-if (decoded.role === "seller")
-  req.userDoc = await Seller.findById(decoded.id).select("-password");
-
-if (decoded.role === "admin")
-  req.userDoc = await Admin.findById(decoded.id).select("-password");
-
+    if (decoded.role === "admin") {
+      req.userDoc = await Admin.findById(decoded.id).select("-password");
+      if (!req.userDoc) {
+        return res.status(401).json({ message: "Admin not found" });
+      }
+    } else {
+      req.userDoc = await User.findById(decoded.id).select("-password");
+      if (!req.userDoc) {
+        return res.status(401).json({ message: "User not found" });
+      }
+      if (req.userDoc.isSuspended) {
+        return res.status(403).json({ message: "Account suspended" });
+      }
+    }
 
     next();
 

@@ -9,8 +9,8 @@ const orderItemSchema = new mongoose.Schema({
 }, { _id: false });
 
 const orderSchema = new mongoose.Schema({
-  buyer: { type: mongoose.Schema.Types.ObjectId, ref: "Buyer", required: true },
-  seller: { type: mongoose.Schema.Types.ObjectId, ref: "Seller", required: true },
+  buyer: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  seller: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   items: [orderItemSchema],
   total: { type: Number, required: true },
   status: {
@@ -28,7 +28,8 @@ const orderSchema = new mongoose.Schema({
   },
   address: String,
   pincode: String,
-  contactNumber: String
+  contactNumber: String,
+  deliveryNote: String
 }, { timestamps: true });
 
 module.exports = mongoose.model("Order", orderSchema);

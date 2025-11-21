@@ -1,25 +1,39 @@
 const Cart = require("../models/cart");
 const Product = require("../models/Product");
-const Seller = require("../models/Seller");
 
 const createProduct = async (req, res) => {
   try {
     const { name, category, unit, price, stock, description } = req.body;
-    if (req.user.role !== "seller") return res.status(403).json({ message: "Only sellers" });
+
+    if (req.user.role !== "seller") {
+      return res.status(403).json({ message: "Only sellers allowed" });
+    }
+
+    if (!req.userDoc.isApproved) {
+      return res.status(403).json({ message: "Seller pending approval" });
+    }
+
     const product = await Product.create({
       seller: req.user.id,
-      name, category, unit, price, stock, description,
-      image: req.file ? "/uploads/" + req.file.filename : undefined
+      name,
+      category,
+      unit,
+      price,
+      stock,
+      description,
+      image: req.file ? "/uploads/" + req.file.filename : undefined,
     });
     res.status(201).json(product);
-  } catch (err) { res.status(500).json({ message: err.message }); }
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
 
 
 const getSingleProduct = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id)
-      .populate("seller", "businessName ownerName email")
+      .populate("seller", "businessName ownerName email phone")
       .populate("category", "name");
 
     if (!product) {
@@ -56,13 +70,18 @@ const getSingleProduct = async (req, res) => {
 
 const updateProduct = async (req, res) => {
   try {
+    if (req.user.role !== "seller") {
+      return res.status(403).json({ message: "Only sellers allowed" });
+    }
     const product = await Product.findOne({ _id: req.params.id, seller: req.user.id });
     if (!product) return res.status(404).json({ message: "Product not found" });
     Object.assign(product, req.body);
     if (req.file) product.image = "/uploads/" + req.file.filename;
     await product.save();
     res.json(product);
-  } catch (err) { res.status(500).json({ message: err.message }); }
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
 
 const deleteProduct = async (req, res) => {
@@ -80,9 +99,12 @@ const getAllProducts = async (req, res) => {
 
     if (category) filter.category = category;
     if (search) filter.name = { $regex: search, $options: "i" };
+    if (!req.user || req.user.role !== "admin") {
+      filter.isApproved = true;
+    }
 
     let prods = await Product.find(filter)
-      .populate("seller", "businessName ownerName email _id");
+      .populate("seller", "businessName ownerName email _id phone");
 
     // Fix: Build card-compatible response
     const finalProducts = prods.map(p => ({
@@ -95,7 +117,7 @@ const getAllProducts = async (req, res) => {
       description: p.description,
       image: p.image ? `${req.protocol}://${req.get("host")}${p.image}` : null,
       sellerName: p.seller?.businessName || "Unknown",
-      sellerId:p.seller._id
+      sellerId: p.seller?._id
     }));
 
     res.json(finalProducts);
@@ -107,9 +129,14 @@ const getAllProducts = async (req, res) => {
 
 const getSellerProducts = async (req, res) => {
   try {
+    if (req.user.role !== "seller") {
+      return res.status(403).json({ message: "Only sellers allowed" });
+    }
     const products = await Product.find({ seller: req.user.id });
     res.json(products);
-  } catch (err) { res.status(500).json({ message: err.message }); }
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
 
 
@@ -138,28 +165,35 @@ const calculateTotals = (cart) => {
 
 const addToCart = async (req, res) => {
   try {
-    const { userId, productId, quantity } = req.body;
+    if (req.user.role !== "buyer") {
+      return res.status(403).json({ message: "Only buyers allowed" });
+    }
+    const { productId, quantity } = req.body;
 
     const product = await Product.findById(productId);
     if (!product) return res.status(404).json({ message: "Product not found" });
 
-    let cart = await Cart.findOne({ user: userId });
+    let cart = await Cart.findOne({ user: req.user.id });
 
+    const qty = Number(quantity) || 1;
+    if (qty < 1) {
+      return res.status(400).json({ message: "Quantity must be at least 1" });
+    }
     const priceAtTime = product.price;
-    const totalPrice = quantity * priceAtTime;
+    const totalPrice = qty * priceAtTime;
 
     if (!cart) {
       cart = new Cart({
-        user: userId,
+        user: req.user.id,
         items: [
           {
             product: productId,
             seller: product.seller,
-            quantity,
+            quantity: qty,
             priceAtTime,
-            totalPrice
-          }
-        ]
+            totalPrice,
+          },
+        ],
       });
     } else {
       const existingItem = cart.items.find(
@@ -167,15 +201,15 @@ const addToCart = async (req, res) => {
       );
 
       if (existingItem) {
-        existingItem.quantity += quantity;
+        existingItem.quantity += qty;
         existingItem.totalPrice = existingItem.quantity * existingItem.priceAtTime;
       } else {
         cart.items.push({
           product: productId,
           seller: product.seller,
-          quantity,
+          quantity: qty,
           priceAtTime,
-          totalPrice
+          totalPrice,
         });
       }
     }
@@ -188,19 +222,23 @@ const addToCart = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
+
 const getCart = async (req, res) => {
   try {
-    const { userId } = req.params;
+    if (req.user.role !== "buyer") {
+      return res.status(403).json({ message: "Only buyers allowed" });
+    }
 
-        const cart = await Cart.find({ user: userId })
+    const cart = await Cart.findOne({ user: req.user.id })
       .populate({
         path: "items.product",
         populate: {
-          path: "seller",      // product ke andar jo seller id hai
-          model: "Seller"
-        }
+          path: "seller",
+          select: "businessName ownerName phone",
+        },
       })
-      .populate("items.seller"); 
+      .populate("items.seller", "businessName ownerName phone");
+
     res.json(cart || { message: "Cart empty" });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -209,9 +247,13 @@ const getCart = async (req, res) => {
 
 const updateQuantity = async (req, res) => {
   try {
-    const { userId, productId, quantity } = req.body;
+    if (req.user.role !== "buyer") {
+      return res.status(403).json({ message: "Only buyers allowed" });
+    }
 
-    const cart = await Cart.findOne({ user: userId });
+    const { productId, quantity } = req.body;
+
+    const cart = await Cart.findOne({ user: req.user.id });
     if (!cart) return res.status(404).json({ message: "Cart not found" });
 
     const item = cart.items.find(
@@ -220,8 +262,13 @@ const updateQuantity = async (req, res) => {
 
     if (!item) return res.status(404).json({ message: "Item not found" });
 
-    item.quantity = quantity;
-    item.totalPrice = quantity * item.priceAtTime;
+    const qty = Number(quantity);
+    if (!qty || qty < 1) {
+      return res.status(400).json({ message: "Quantity must be at least 1" });
+    }
+
+    item.quantity = qty;
+    item.totalPrice = item.quantity * item.priceAtTime;
 
     calculateTotals(cart);
     await cart.save();
@@ -233,9 +280,12 @@ const updateQuantity = async (req, res) => {
 };
 const removeItem = async (req, res) => {
   try {
-    const { userId, productId } = req.body;
+    if (req.user.role !== "buyer") {
+      return res.status(403).json({ message: "Only buyers allowed" });
+    }
+    const { productId } = req.body;
 
-    const cart = await Cart.findOne({ user: userId });
+    const cart = await Cart.findOne({ user: req.user.id });
     if (!cart) return res.status(404).json({ message: "Cart not found" });
 
     cart.items = cart.items.filter(
@@ -253,9 +303,11 @@ const removeItem = async (req, res) => {
 
 const clearCart = async (req, res) => {
   try {
-    const { userId } = req.body;
+    if (req.user.role !== "buyer") {
+      return res.status(403).json({ message: "Only buyers allowed" });
+    }
 
-    await Cart.findOneAndDelete({ user: userId });
+    await Cart.findOneAndDelete({ user: req.user.id });
 
     res.json({ message: "Cart cleared" });
   } catch (error) {
