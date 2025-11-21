@@ -6,10 +6,8 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken")
 
 
-// ADMIN LOGIN
 const adminLogin = async (req, res) => {
   const { email, password } = req.body;
-console.log(req.body);
 
   const admin = await Admin.findOne({ email });
 
@@ -21,7 +19,6 @@ console.log(req.body);
   const token = jwt.sign({ id: admin._id, role: "admin" }, process.env.JWT_SECRET, {
     expiresIn: "7d",
   });
-console.log("Admin", {role: "admin"});
 
   res.json({ message: "Login success", token , role: "admin",});
 };
@@ -32,7 +29,6 @@ const getAllUsers = async (req, res) => {
     const sellers = await User.find({ role: "seller" }).select("-password");
     res.json({ buyers, sellers });
   } catch (error) {
-    console.error("Error fetching users:", error);
     res.status(500).json({ message: error.message || "Failed to fetch users" });
   }
 };
@@ -68,7 +64,6 @@ const updateUser = async (req, res) => {
     await user.save();
     res.json(user);
   } catch (error) {
-    console.error("Error updating user:", error);
     res.status(500).json({ message: error.message || "Failed to update user" });
   }
 };
@@ -90,7 +85,6 @@ const resetUserPassword = async (req, res) => {
 
     res.json({ message: "Password reset successfully" });
   } catch (error) {
-    console.error("Error resetting password:", error);
     res.status(500).json({ message: error.message || "Failed to reset password" });
   }
 };
@@ -105,7 +99,6 @@ const getAllProductsAdmin = async (req, res) => {
     const products = await Product.find(filter).populate("seller", "businessName ownerName email");
     res.json(products);
   } catch (error) {
-    console.error("Error fetching products:", error);
     res.status(500).json({ message: error.message || "Failed to fetch products" });
   }
 };
@@ -119,8 +112,6 @@ const updateProductApproval = async (req, res) => {
       return res.status(400).json({ message: "isApproved field is required" });
     }
 
-    // Use updateOne to only update isApproved field
-    // This avoids touching the category field which might have validation issues
     const result = await Product.updateOne(
       { _id: id },
       { $set: { isApproved: Boolean(isApproved) } }
@@ -130,22 +121,17 @@ const updateProductApproval = async (req, res) => {
       return res.status(404).json({ message: "Product not found" });
     }
 
-    // Try to fetch the product, but handle category validation errors gracefully
     try {
       const product = await Product.findById(id)
         .populate("seller", "businessName ownerName email")
         .lean();
       
-      // If category exists but is invalid, set it to null
       if (product && product.category && typeof product.category === 'string') {
         product.category = null;
       }
       
       res.json(product);
     } catch (fetchError) {
-      // If fetching fails due to category validation, still return success
-      // The frontend will refetch the list anyway
-      console.warn("Could not fetch updated product, but update was successful:", fetchError.message);
       res.json({ 
         _id: id, 
         isApproved: Boolean(isApproved),
@@ -153,7 +139,6 @@ const updateProductApproval = async (req, res) => {
       });
     }
   } catch (error) {
-    console.error("Error updating product approval:", error);
     res.status(500).json({ message: error.message || "Failed to update product approval" });
   }
 };
@@ -168,7 +153,6 @@ const getAllOrdersAdmin = async (req, res) => {
     const orders = await Order.find(filter).populate("buyer seller");
     res.json(orders);
   } catch (error) {
-    console.error("Error fetching orders:", error);
     res.status(500).json({ message: error.message || "Failed to fetch orders" });
   }
 };
@@ -195,7 +179,6 @@ const overrideOrderStatus = async (req, res) => {
 
     res.json(order);
   } catch (error) {
-    console.error("Error updating order status:", error);
     res.status(500).json({ message: error.message || "Failed to update order status" });
   }
 };

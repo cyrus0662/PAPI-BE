@@ -12,20 +12,30 @@ const placeOrder = async (req, res) => {
     if (!items || items.length === 0)
       return res.status(400).json({ message: "No items provided" });
 
-    const sellerDoc = await User.findOne({ _id: seller, role: "seller" });
-    if (!sellerDoc) {
-      return res.status(400).json({ message: "Seller not found" });
-    }
-
     let total = 0;
     let orderItems = [];
+    let productSellerId = null;
 
+    // First, fetch all products and determine the seller from products
     for (const it of items) {
       const prod = await Product.findById(it.product);
       if (!prod)
         return res.status(400).json({ message: `Product not found: ${it.product}` });
-      if (prod.seller.toString() !== sellerDoc._id.toString()) {
-        return res.status(400).json({ message: "Products must belong to the selected seller" });
+      
+      // Verify product has a seller
+      if (!prod.seller) {
+        return res.status(400).json({ 
+          message: `Product ${prod.name} (${it.product}) has no seller assigned. This product was likely created incorrectly.` 
+        });
+      }
+      
+      // Set seller from first product, or verify all products belong to same seller
+      if (!productSellerId) {
+        productSellerId = prod.seller.toString();
+      } else if (prod.seller.toString() !== productSellerId) {
+        return res.status(400).json({ 
+          message: `All products in an order must belong to the same seller. Product ${prod.name} belongs to a different seller.` 
+        });
       }
 
       orderItems.push({
@@ -39,9 +49,38 @@ const placeOrder = async (req, res) => {
       total += prod.price * it.qty;
     }
 
+    // Use seller from products if not provided, or validate provided seller matches
+    const finalSellerId = seller || productSellerId;
+    
+    if (!finalSellerId) {
+      return res.status(400).json({ message: "Unable to determine seller from products" });
+    }
+
+    // Validate that the seller exists and is a seller
+    const sellerDoc = await User.findOne({ _id: finalSellerId, role: "seller" });
+    if (!sellerDoc) {
+      // Try to find if user exists with different role or doesn't exist at all
+      const userExists = await User.findById(finalSellerId);
+      if (userExists) {
+        return res.status(400).json({ 
+          message: `The seller for these products is not a valid seller. Current role: ${userExists.role}` 
+        });
+      }
+      return res.status(400).json({ 
+        message: `Seller not found. The seller for these products may have been deleted.` 
+      });
+    }
+
+    // If seller was provided explicitly, verify it matches the products' seller
+    if (seller && seller.toString() !== productSellerId) {
+      return res.status(400).json({ 
+        message: `Provided seller ID (${seller}) does not match the products' seller (${productSellerId})` 
+      });
+    }
+
     const order = await Order.create({
       buyer: req.user.id,
-      seller,
+      seller: finalSellerId, // Use seller derived from products
       items: orderItems,
       total,
       address,

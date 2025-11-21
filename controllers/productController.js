@@ -33,12 +33,18 @@ const createProduct = async (req, res) => {
 const getSingleProduct = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id)
-      .populate("seller", "businessName ownerName email phone")
+      .populate("seller", "businessName ownerName name email phone")
       .populate("category", "name");
 
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
     }
+
+    // Get seller name with fallbacks
+    const sellerName = product.seller?.businessName || 
+                       product.seller?.ownerName || 
+                       product.seller?.name || 
+                       "Unknown";
 
     // Response front-end friendly format
     const formattedProduct = {
@@ -53,10 +59,13 @@ const getSingleProduct = async (req, res) => {
       image: product.image
         ? `${req.protocol}://${req.get("host")}${product.image}`
         : null,
+      sellerName: sellerName,
+      sellerId: product.seller?._id || product.seller,
       seller: {
-        name: product.seller?.businessName || "Unknown",
+        name: sellerName,
         owner: product.seller?.ownerName,
         email: product.seller?.email,
+        businessName: product.seller?.businessName,
       },
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,
@@ -105,21 +114,26 @@ const getAllProducts = async (req, res) => {
     }
 
     let prods = await Product.find(filter)
-      .populate("seller", "businessName ownerName email _id phone");
+      .populate("seller", "businessName ownerName name email _id phone")
+      .populate("category", "name");
 
     // Fix: Build card-compatible response
-    const finalProducts = prods.map(p => ({
-      id: p.id,
-      name: p.name,
-      category: p.category,
-      unit: p.unit,
-      price: p.price,
-      stock: p.stock,
-      description: p.description,
-      image: p.image ? `${req.protocol}://${req.get("host")}${p.image}` : null,
-      sellerName: p.seller?.businessName || "Unknown",
-      sellerId: p.seller?._id
-    }));
+    const finalProducts = prods.map(p => {
+      const sellerName = p.seller?.businessName || p.seller?.ownerName || p.seller?.name || "Unknown";
+      return {
+        id: p.id,
+        name: p.name,
+        category: p.category?._id || p.category || null,
+        categoryName: p.category?.name || null,
+        unit: p.unit,
+        price: p.price,
+        stock: p.stock,
+        description: p.description,
+        image: p.image ? `${req.protocol}://${req.get("host")}${p.image}` : null,
+        sellerName: sellerName,
+        sellerId: p.seller?._id
+      };
+    });
 
     res.json(finalProducts);
   } catch (err) {
@@ -150,26 +164,28 @@ const getProductsByCategory = async (req, res) => {
     }
 
     const products = await Product.find({ category, isApproved: true })
-      .populate("seller", "businessName ownerName email _id phone");
+      .populate("seller", "businessName ownerName name email _id phone");
 
     // Format products to match frontend expectations
-    const formattedProducts = products.map(p => ({
-      id: p.id,
-      _id: p._id,
-      name: p.name,
-      category: p.category,
-      unit: p.unit,
-      price: p.price,
-      stock: p.stock,
-      description: p.description,
-      image: p.image ? `${req.protocol}://${req.get("host")}${p.image}` : null,
-      sellerName: p.seller?.businessName || "Unknown",
-      sellerId: p.seller?._id
-    }));
+    const formattedProducts = products.map(p => {
+      const sellerName = p.seller?.businessName || p.seller?.ownerName || p.seller?.name || "Unknown";
+      return {
+        id: p.id,
+        _id: p._id,
+        name: p.name,
+        category: p.category,
+        unit: p.unit,
+        price: p.price,
+        stock: p.stock,
+        description: p.description,
+        image: p.image ? `${req.protocol}://${req.get("host")}${p.image}` : null,
+        sellerName: sellerName,
+        sellerId: p.seller?._id
+      };
+    });
 
     res.json({ products: formattedProducts });
   } catch (error) {
-    console.error("Category fetch error:", error);
     res.status(500).json({ error: "Failed to fetch products by category" });
   }
 };
@@ -252,17 +268,90 @@ const getCart = async (req, res) => {
       return res.status(403).json({ message: "Only buyers allowed" });
     }
 
+    // First, get the cart with populate
     const cart = await Cart.findOne({ user: req.user.id })
       .populate({
         path: "items.product",
         populate: {
           path: "seller",
-          select: "businessName ownerName phone",
+          select: "_id businessName ownerName phone name",
         },
       })
-      .populate("items.seller", "businessName ownerName phone");
+      .populate("items.seller", "_id businessName ownerName phone name");
 
-    res.json(cart || { message: "Cart empty" });
+    if (!cart) {
+      return res.json({ message: "Cart empty" });
+    }
+
+    // Get raw cart with ObjectIds (before populate) to access seller ObjectIds
+    const rawCart = await Cart.findOne({ user: req.user.id }).lean();
+
+    // If cart exists, ensure seller IDs are always accessible
+    if (cart.items && cart.items.length > 0 && rawCart && rawCart.items) {
+      // Process items asynchronously to fetch missing seller info
+      const processedItems = await Promise.all(
+        cart.items.map(async (item, index) => {
+          const rawItem = rawCart.items[index];
+          
+          // Convert to plain object
+          const itemObj = item.toObject ? item.toObject() : item;
+          
+          // If item.seller is null (populate failed), try multiple fallbacks
+          if (!itemObj.seller || (typeof itemObj.seller === 'object' && !itemObj.seller._id)) {
+            // Method 1: Get seller ObjectId from raw cart item (stored when cart was created)
+            if (rawItem && rawItem.seller) {
+              const sellerId = rawItem.seller.toString();
+              
+              // Fetch seller info from database
+              try {
+                const User = require("../models/User");
+                const sellerDoc = await User.findById(sellerId).select("_id businessName ownerName phone name");
+                if (sellerDoc) {
+                  itemObj.seller = sellerDoc.toObject ? sellerDoc.toObject() : sellerDoc;
+                } else {
+                  itemObj.seller = { _id: sellerId };
+                }
+              } catch (err) {
+                itemObj.seller = { _id: sellerId };
+              }
+            }
+            // Method 2: Fetch seller from product directly from database
+            if ((!itemObj.seller || !itemObj.seller._id) && itemObj.product && itemObj.product._id) {
+              try {
+                // Fetch product directly (not populated) to get the raw seller ObjectId
+                const rawProduct = await Product.findById(itemObj.product._id).lean();
+                
+                if (rawProduct && rawProduct.seller) {
+                  const sellerId = rawProduct.seller.toString();
+                  
+                  // Fetch seller details
+                  const User = require("../models/User");
+                  const sellerDoc = await User.findById(sellerId).select("_id businessName ownerName phone name").lean();
+                  
+                  if (sellerDoc) {
+                    itemObj.seller = sellerDoc;
+                    // Also update product object
+                    if (!itemObj.product.seller) {
+                      itemObj.product.seller = sellerDoc;
+                    }
+                  } else {
+                    // Seller doesn't exist, but we have the ID
+                    itemObj.seller = { _id: sellerId };
+                  }
+                }
+              } catch (err) {
+              }
+            }
+          }
+          
+          return itemObj;
+        })
+      );
+      
+      cart.items = processedItems;
+    }
+
+    res.json(cart);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

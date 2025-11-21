@@ -14,7 +14,6 @@ const register = async (req, res) => {
   try {
 
     const { role, email, password, ...rest } = req.body;
-    console.log(req?.body, { email, ...rest });
 
 
     if (!role || !["buyer", "seller"].includes(role))
@@ -26,7 +25,6 @@ const register = async (req, res) => {
     if (role == "seller") {
       ownerName == rest?.name
     }
-    console.log("ownerName", ownerName, rest?.name, role == "seller");
 
 
     if (existsBuyer)
@@ -55,7 +53,6 @@ const register = async (req, res) => {
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
-    console.log(req.body);
 
     // Find user
     const user = await User.findOne({ email });
@@ -84,8 +81,6 @@ const login = async (req, res) => {
     });
 
   } catch (err) {
-    console.log(err);
-
     res.status(500).json({ message: err.message });
   }
 };
@@ -95,7 +90,6 @@ const login = async (req, res) => {
 const createAdmin = async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    console.log(req.body);
 
     const existingAdmin = await Admin.findOne();
     if (existingAdmin) {
@@ -225,8 +219,6 @@ const getAdminStats = async (req, res) => {
   }
 };
 
-// users profiel
-
 const getProfile = async (req, res) => {
   try {
     if (!req.userDoc) {
@@ -240,7 +232,6 @@ const getProfile = async (req, res) => {
 };
 
 
-// user update profile
 const updateProfile = async (req, res) => {
   try {
     if (!req.userDoc) {
