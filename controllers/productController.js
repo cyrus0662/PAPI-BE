@@ -44,7 +44,8 @@ const getSingleProduct = async (req, res) => {
     const formattedProduct = {
       id: product.id,
       name: product.name,
-      category: product.category,
+      category: product.category?._id || product.category || null,
+      categoryName: product.category?.name || null,
       unit: product.unit,
       price: product.price,
       stock: product.stock,
@@ -142,9 +143,31 @@ const getSellerProducts = async (req, res) => {
 
 const getProductsByCategory = async (req, res) => {
   try {
-    const products = await Product.find({ category: req.params.category });
+    const { category } = req.params;
+    
+    if (!category || category === 'undefined') {
+      return res.status(400).json({ error: "Category parameter is required" });
+    }
 
-    res.json(products);
+    const products = await Product.find({ category, isApproved: true })
+      .populate("seller", "businessName ownerName email _id phone");
+
+    // Format products to match frontend expectations
+    const formattedProducts = products.map(p => ({
+      id: p.id,
+      _id: p._id,
+      name: p.name,
+      category: p.category,
+      unit: p.unit,
+      price: p.price,
+      stock: p.stock,
+      description: p.description,
+      image: p.image ? `${req.protocol}://${req.get("host")}${p.image}` : null,
+      sellerName: p.seller?.businessName || "Unknown",
+      sellerId: p.seller?._id
+    }));
+
+    res.json({ products: formattedProducts });
   } catch (error) {
     console.error("Category fetch error:", error);
     res.status(500).json({ error: "Failed to fetch products by category" });
