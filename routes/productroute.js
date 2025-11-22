@@ -16,16 +16,16 @@ const {
 
 const { authMiddleware, authorize } = require("../middleware/authMiddleware");
 
-const { uploadSingle } = require("../middleware/uploadMiddleware");
+const { uploadSingleOptional } = require("../middleware/uploadMiddleware");
 
 const productroute = express.Router();
 
 productroute.get("/products", getAllProducts);
 
-productroute.get("/products/my", authMiddleware, authorize("seller"), getSellerProducts);
-productroute.post("/products", authMiddleware, authorize("seller"), uploadSingle, createProduct);
-productroute.put("/products/:id", authMiddleware, authorize("seller"), uploadSingle, updateProduct);
-productroute.delete("/products/:id", authMiddleware, authorize("seller"), deleteProduct);
+productroute.get("/products/my", authMiddleware, authorize("seller", "admin"), getSellerProducts);
+productroute.post("/products", authMiddleware, authorize("seller", "admin"), uploadSingleOptional, createProduct);
+productroute.put("/products/:id", authMiddleware, authorize("seller", "admin"), uploadSingleOptional, updateProduct);
+productroute.delete("/products/:id", authMiddleware, authorize("seller", "admin"), deleteProduct);
 productroute.get('/products/:id',getSingleProduct)
 productroute.get("/products/category/:category", getProductsByCategory);
 productroute.post("/cart/add", authMiddleware, authorize("buyer"), addToCart);

@@ -97,7 +97,28 @@ const getAllProductsAdmin = async (req, res) => {
       filter.isApproved = isApproved === "true";
     }
     const products = await Product.find(filter).populate("seller", "businessName ownerName email");
-    res.json(products);
+    
+    // Format products with correct image URLs
+    const formattedProducts = products.map(p => {
+      let imageUrl = null;
+      if (p.image) {
+        // If image is already a full URL (Cloudinary), use it as-is
+        if (p.image.startsWith('http://') || p.image.startsWith('https://')) {
+          imageUrl = p.image;
+        } else {
+          // Local upload - prepend server URL
+          imageUrl = `${req.protocol}://${req.get("host")}${p.image}`;
+        }
+      }
+      
+      const productObj = p.toObject ? p.toObject() : p;
+      return {
+        ...productObj,
+        image: imageUrl
+      };
+    });
+    
+    res.json(formattedProducts);
   } catch (error) {
     res.status(500).json({ message: error.message || "Failed to fetch products" });
   }

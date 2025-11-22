@@ -17,5 +17,21 @@ const storage = multer.diskStorage({
 
 const uploadSingle = multer({ storage }).single("image");
 const uploadLogo = multer({ storage }).single("logo");
-module.exports = { uploadSingle, uploadLogo };
+
+// Optional upload middleware that doesn't fail if no file is provided
+const uploadSingleOptional = (req, res, next) => {
+  uploadSingle(req, res, (err) => {
+    // If error is "Unexpected field" or "No file received", ignore it (might be JSON request)
+    if (err && (err.code === 'LIMIT_UNEXPECTED_FILE' || err.message.includes('No file'))) {
+      // Clear the error and continue - this is likely a JSON request with Cloudinary URL
+      return next();
+    }
+    // For other errors, pass them along
+    if (err) return next(err);
+    // No error, continue
+    next();
+  });
+};
+
+module.exports = { uploadSingle, uploadSingleOptional, uploadLogo };
 
