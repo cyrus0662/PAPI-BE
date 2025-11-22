@@ -6,6 +6,6 @@ const orderRoute = express.Router()
 orderRoute.post("/orders", authMiddleware, authorize("buyer"), placeOrder);
 orderRoute.get("/orders/my", authMiddleware, authorize("buyer"), getMyOrders);
 orderRoute.get("/orders/seller", authMiddleware, authorize("seller"), getOrdersForSeller);
-orderRoute.put("/orders/:id/status", authMiddleware, updateOrderStatus);
+orderRoute.put("/orders/:id/status", authMiddleware, authorize("seller","admin"), updateOrderStatus);
 
 module.exports = orderRoute

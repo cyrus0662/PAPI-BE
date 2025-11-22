@@ -1,8 +1,6 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
-const Buyer = require("../models/Buyer");
-const Seller = require("../models/Seller");
 const Admin = require("../models/Admin");
 const User = require('../models/User');
 const Product = require("../models/Product");
@@ -16,7 +14,6 @@ const register = async (req, res) => {
   try {
 
     const { role, email, password, ...rest } = req.body;
-    console.log(req?.body, { email, ...rest });
 
 
     if (!role || !["buyer", "seller"].includes(role))
@@ -28,7 +25,6 @@ const register = async (req, res) => {
     if (role == "seller") {
       ownerName == rest?.name
     }
-    console.log("ownerName", ownerName, rest?.name, role == "seller");
 
 
     if (existsBuyer)
@@ -57,7 +53,6 @@ const register = async (req, res) => {
 const login = async (req, res) => {
   try {
     const { email, password } = req.body;
-    console.log(req.body);
 
     // Find user
     const user = await User.findOne({ email });
@@ -66,6 +61,10 @@ const login = async (req, res) => {
     // Password check
     const ok = await bcrypt.compare(password, user.password);
     if (!ok) return res.status(400).json({ message: "Invalid credentials" });
+
+    if (user.isSuspended) {
+      return res.status(403).json({ message: "Account suspended" });
+    }
 
     // ROLE comes from user document
     const token = genToken(user._id, user.role);
@@ -82,8 +81,6 @@ const login = async (req, res) => {
     });
 
   } catch (err) {
-    console.log(err);
-
     res.status(500).json({ message: err.message });
   }
 };
@@ -93,7 +90,6 @@ const login = async (req, res) => {
 const createAdmin = async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    console.log(req.body);
 
     const existingAdmin = await Admin.findOne();
     if (existingAdmin) {
@@ -123,19 +119,14 @@ const forgotPassword = async (req, res) => {
   try {
     const { email, role } = req.body;
 
-    let Model =
-      role === "buyer"
-        ? Buyer
-        : role === "seller"
-          ? Seller
-          : role === "admin"
-            ? Admin
-            : null;
+    if (!role || !["buyer", "seller", "admin"].includes(role)) {
+      return res.status(400).json({ message: "Invalid role" });
+    }
 
-    if (!Model) return res.status(400).json({ message: "Invalid role" });
+    const Model = role === "admin" ? Admin : User;
+    const query = role === "admin" ? { email } : { email, role };
 
-    const user = await Model.findOne({ email });
-
+    const user = await Model.findOne(query);
     if (!user) return res.status(400).json({ message: "User not found" });
 
     const token = crypto.randomBytes(20).toString("hex");
@@ -157,20 +148,15 @@ const resetPassword = async (req, res) => {
     const { token } = req.params;
     const { password, role } = req.body;
 
-    let Model =
-      role === "buyer"
-        ? Buyer
-        : role === "seller"
-          ? Seller
-          : role === "admin"
-            ? Admin
-            : null;
+    if (!role || !["buyer", "seller", "admin"].includes(role)) {
+      return res.status(400).json({ message: "Invalid role" });
+    }
 
-    if (!Model) return res.status(400).json({ message: "Invalid role" });
-
+    const Model = role === "admin" ? Admin : User;
     const user = await Model.findOne({
       resetPasswordToken: token,
       resetPasswordExpire: { $gt: Date.now() },
+      ...(role === "admin" ? {} : { role }),
     });
 
     if (!user) return res.status(400).json({ message: "Invalid/Expired token" });
@@ -190,21 +176,48 @@ const resetPassword = async (req, res) => {
 
 const getAdminStats = async (req, res) => {
   try {
-    const users = (await User.countDocuments()) + (await Seller.countDocuments());
-    const products = await Product.countDocuments();
-    const orders = await Order.countDocuments();
+    const [buyerCount, sellerCount, productCount, activeOrders, completedOrders, productPerformance] = await Promise.all([
+      User.countDocuments({ role: "buyer" }),
+      User.countDocuments({ role: "seller" }),
+      Product.countDocuments(),
+      Order.countDocuments({ status: { $in: ["Pending", "Accepted", "Packed", "Out for Delivery"] } }),
+      Order.countDocuments({ status: "Delivered" }),
+      Order.aggregate([
+        { $unwind: "$items" },
+        {
+          $group: {
+            _id: "$items.product",
+            totalQuantity: { $sum: "$items.qty" },
+            totalRevenue: { $sum: { $multiply: ["$items.qty", "$items.price"] } },
+          },
+        },
+        { $sort: { totalQuantity: -1 } },
+        { $limit: 5 },
+      ]),
+    ]);
+
+    const populatedPerformance = await Product.populate(productPerformance, {
+      path: "_id",
+      select: "name",
+    });
 
     res.json({
-      users,
-      products,
-      orders,
+      buyers: buyerCount,
+      sellers: sellerCount,
+      products: productCount,
+      activeOrders,
+      completedOrders,
+      topProducts: populatedPerformance.map((entry) => ({
+        productId: entry._id?._id,
+        name: entry._id?.name,
+        totalQuantity: entry.totalQuantity,
+        totalRevenue: entry.totalRevenue,
+      })),
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
-
-// users profiel
 
 const getProfile = async (req, res) => {
   try {
@@ -219,25 +232,34 @@ const getProfile = async (req, res) => {
 };
 
 
-// user update profile
 const updateProfile = async (req, res) => {
   try {
-    const { name, phone, address, pincode } = req.body;
-
     if (!req.userDoc) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    req.userDoc.name = name || req.userDoc.name;
-    req.userDoc.phone = phone || req.userDoc.phone;
-    req.userDoc.address = address || req.userDoc.address;
-    req.userDoc.pincode = pincode || req.userDoc.pincode;
+    const allowedFields =
+      req.user.role === "seller"
+        ? ["businessName", "ownerName", "address", "pincode", "phone", "organicCertificate", "logo"]
+        : ["name", "phone", "address", "pincode"];
+
+    allowedFields.forEach((field) => {
+      if (req.body[field] !== undefined && field !== "logo") {
+        req.userDoc[field] = req.body[field];
+      }
+    });
+
+    if (req.file && req.user.role === "seller") {
+      req.userDoc.logo = "/uploads/" + req.file.filename;
+    } else if (req.body.logo !== undefined && req.user.role === "seller") {
+      req.userDoc.logo = req.body.logo;
+    }
 
     await req.userDoc.save();
 
     res.json({ success: true, user: req.userDoc });
   } catch (error) {
-    res.status(500).json({ message: "Server Error" });
+    res.status(500).json({ message: error.message || "Server Error" });
   }
 };
 

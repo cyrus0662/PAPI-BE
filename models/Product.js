@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 
 const productSchema = new mongoose.Schema({
-  seller: { type: mongoose.Schema.Types.ObjectId, ref: "Seller", required: true },
+  seller: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   name: { type: String, required: true },
   category: { type:mongoose.Schema.Types.ObjectId, ref: "Category",  },
   unit: { type: String, default: "kg" },  

@@ -40,17 +40,11 @@ const userSchema = new mongoose.Schema(
     // SELLER FIELDS
     businessName: {
       type: String,
-      // required: function () {
-      //   return this.role === "seller";
-      // },
-      default:null
+      default: null,
     },
     ownerName: {
       type: String,
-      // required: function () {
-      //   return this.role === "seller";
-      // },
-      default:null
+      default: null,
     },
     organicCertificate: {
       type: String,
@@ -61,7 +55,13 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
-    // ADMIN FIELDS
+    // ADMIN / MODERATION FIELDS
+    isApproved: {
+      type: Boolean,
+      default: function () {
+        return this.role !== "seller";
+      },
+    },
     isSuspended: {
       type: Boolean,
       default: false,
