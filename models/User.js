@@ -54,6 +54,19 @@ const userSchema = new mongoose.Schema(
       type: String, // image URL
       default: null,
     },
+    
+    // Selected products during registration
+    selectedProducts: {
+      type: [{
+        id: String,
+        name: String,
+        price: Number,
+        unit: String,
+        image: String,
+        category: String
+      }],
+      default: []
+    },
 
     // ADMIN / MODERATION FIELDS
     isApproved: {
