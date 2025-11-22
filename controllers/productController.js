@@ -5,13 +5,15 @@ const Category = require("../models/categoryModel");
 
 const createProduct = async (req, res) => {
   try {
-    const { name, category, unit, price, stock, description } = req.body;
+    const { name, category, unit, price, stock, description, image } = req.body;
 
-    if (req.user.role !== "seller") {
-      return res.status(403).json({ message: "Only sellers allowed" });
+    // Allow both seller and admin to create products
+    if (req.user.role !== "seller" && req.user.role !== "admin") {
+      return res.status(403).json({ message: "Only sellers and admins allowed" });
     }
 
-    if (!req.userDoc.isApproved) {
+    // Sellers need approval, admins don't
+    if (req.user.role === "seller" && !req.userDoc.isApproved) {
       return res.status(403).json({ message: "Seller pending approval" });
     }
 
@@ -89,6 +91,18 @@ const createProduct = async (req, res) => {
 
     categoryId = categoryDoc._id;
 
+    // Handle image: priority is file upload, then Cloudinary URL from body, then undefined
+    let imageUrl = undefined;
+    if (req.file) {
+      // File upload (Multer) - store local path
+      imageUrl = "/uploads/" + req.file.filename;
+    } else if (image && typeof image === 'string' && image.trim()) {
+      // Cloudinary URL from req.body
+      imageUrl = image.trim();
+    }
+
+    // For admin-created products, set seller to admin's ID (admin acts as seller for these products)
+    // For seller-created products, use seller's ID
     const product = await Product.create({
       seller: req.user.id,
       name,
@@ -97,7 +111,9 @@ const createProduct = async (req, res) => {
       price,
       stock,
       description,
-      image: req.file ? "/uploads/" + req.file.filename : undefined,
+      image: imageUrl,
+      // Admin-created products are auto-approved
+      isApproved: req.user.role === "admin" ? true : undefined,
     });
     res.status(201).json(product);
   } catch (err) {
@@ -137,7 +153,9 @@ const getSingleProduct = async (req, res) => {
       stock: product.stock,
       description: product.description,
       image: product.image
-        ? `${req.protocol}://${req.get("host")}${product.image}`
+        ? (product.image.startsWith('http://') || product.image.startsWith('https://')
+            ? product.image
+            : `${req.protocol}://${req.get("host")}${product.image}`)
         : null,
       sellerName: sellerName,
       sellerId: product.seller?._id || product.seller,
@@ -160,13 +178,35 @@ const getSingleProduct = async (req, res) => {
 
 const updateProduct = async (req, res) => {
   try {
-    if (req.user.role !== "seller") {
-      return res.status(403).json({ message: "Only sellers allowed" });
+    // Allow both seller and admin to update products
+    if (req.user.role !== "seller" && req.user.role !== "admin") {
+      return res.status(403).json({ message: "Only sellers and admins allowed" });
     }
-    const product = await Product.findOne({ _id: req.params.id, seller: req.user.id });
+    
+    // Sellers can only update their own products, admins can update any product
+    let product;
+    if (req.user.role === "admin") {
+      product = await Product.findById(req.params.id);
+    } else {
+      product = await Product.findOne({ _id: req.params.id, seller: req.user.id });
+    }
+    
     if (!product) return res.status(404).json({ message: "Product not found" });
-    Object.assign(product, req.body);
-    if (req.file) product.image = "/uploads/" + req.file.filename;
+    
+    // Update all fields from req.body except image (handle separately)
+    const { image, ...otherFields } = req.body;
+    Object.assign(product, otherFields);
+    
+    // Handle image: priority is file upload, then Cloudinary URL from body
+    if (req.file) {
+      // File upload (Multer) - store local path
+      product.image = "/uploads/" + req.file.filename;
+    } else if (image && typeof image === 'string' && image.trim()) {
+      // Cloudinary URL from req.body
+      product.image = image.trim();
+    }
+    // If no image provided, keep existing image
+    
     await product.save();
     res.json(product);
   } catch (err) {
@@ -176,7 +216,14 @@ const updateProduct = async (req, res) => {
 
 const deleteProduct = async (req, res) => {
   try {
-    const product = await Product.findOneAndDelete({ _id: req.params.id, seller: req.user.id });
+    // Sellers can only delete their own products, admins can delete any product
+    let product;
+    if (req.user.role === "admin") {
+      product = await Product.findOneAndDelete({ _id: req.params.id });
+    } else {
+      product = await Product.findOneAndDelete({ _id: req.params.id, seller: req.user.id });
+    }
+    
     if (!product) return res.status(404).json({ message: "Product not found" });
     res.json({ message: "Deleted" });
   } catch (err) { res.status(500).json({ message: err.message }); }
@@ -209,7 +256,11 @@ const getAllProducts = async (req, res) => {
         price: p.price,
         stock: p.stock,
         description: p.description,
-        image: p.image ? `${req.protocol}://${req.get("host")}${p.image}` : null,
+        image: p.image 
+          ? (p.image.startsWith('http://') || p.image.startsWith('https://') 
+              ? p.image 
+              : `${req.protocol}://${req.get("host")}${p.image}`)
+          : null,
         sellerName: sellerName,
         sellerId: p.seller?._id
       };
@@ -228,7 +279,27 @@ const getSellerProducts = async (req, res) => {
       return res.status(403).json({ message: "Only sellers allowed" });
     }
     const products = await Product.find({ seller: req.user.id });
-    res.json(products);
+    
+    // Format products with correct image URLs
+    const formattedProducts = products.map(p => {
+      let imageUrl = null;
+      if (p.image) {
+        // If image is already a full URL (Cloudinary), use it as-is
+        if (p.image.startsWith('http://') || p.image.startsWith('https://')) {
+          imageUrl = p.image;
+        } else {
+          // Local upload - prepend server URL
+          imageUrl = `${req.protocol}://${req.get("host")}${p.image}`;
+        }
+      }
+      
+      return {
+        ...p.toObject(),
+        image: imageUrl
+      };
+    });
+    
+    res.json(formattedProducts);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -258,7 +329,11 @@ const getProductsByCategory = async (req, res) => {
         price: p.price,
         stock: p.stock,
         description: p.description,
-        image: p.image ? `${req.protocol}://${req.get("host")}${p.image}` : null,
+        image: p.image 
+          ? (p.image.startsWith('http://') || p.image.startsWith('https://') 
+              ? p.image 
+              : `${req.protocol}://${req.get("host")}${p.image}`)
+          : null,
         sellerName: sellerName,
         sellerId: p.seller?._id
       };
