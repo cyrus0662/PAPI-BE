@@ -244,16 +244,22 @@ const updateProfile = async (req, res) => {
         : ["name", "phone", "address", "pincode"];
 
     allowedFields.forEach((field) => {
-      if (req.body[field] !== undefined) {
+      if (req.body[field] !== undefined && field !== "logo") {
         req.userDoc[field] = req.body[field];
       }
     });
+
+    if (req.file && req.user.role === "seller") {
+      req.userDoc.logo = "/uploads/" + req.file.filename;
+    } else if (req.body.logo !== undefined && req.user.role === "seller") {
+      req.userDoc.logo = req.body.logo;
+    }
 
     await req.userDoc.save();
 
     res.json({ success: true, user: req.userDoc });
   } catch (error) {
-    res.status(500).json({ message: "Server Error" });
+    res.status(500).json({ message: error.message || "Server Error" });
   }
 };
 

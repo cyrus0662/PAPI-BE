@@ -1,5 +1,7 @@
+const mongoose = require("mongoose");
 const Cart = require("../models/cart");
 const Product = require("../models/Product");
+const Category = require("../models/categoryModel");
 
 const createProduct = async (req, res) => {
   try {
@@ -13,10 +15,84 @@ const createProduct = async (req, res) => {
       return res.status(403).json({ message: "Seller pending approval" });
     }
 
+    if (!category) {
+      return res.status(400).json({ 
+        message: "Category is required. Please select a category." 
+      });
+    }
+
+    let categoryId = category;
+    let categoryDoc = null;
+
+    if (mongoose.Types.ObjectId.isValid(category)) {
+      categoryDoc = await Category.findById(category);
+    } else {
+      const normalizedCategory = category.trim().toLowerCase();
+      categoryDoc = await Category.findOne({
+        $or: [
+          { slug: { $regex: new RegExp(`^${normalizedCategory}$`, "i") } },
+          { name: { $regex: new RegExp(`^${normalizedCategory}$`, "i") } }
+        ]
+      });
+    }
+
+    if (!categoryDoc) {
+      const normalizedCategory = category.trim().toLowerCase();
+      
+      const validCategories = {
+        'vegetables': { name: 'Vegetables', slug: 'vegetables' },
+        'fruits': { name: 'Fruits', slug: 'fruits' },
+        'leafy greens': { name: 'Leafy Greens', slug: 'leafy-greens' },
+        'leafy-greens': { name: 'Leafy Greens', slug: 'leafy-greens' },
+        'root vegetables': { name: 'Root Vegetables', slug: 'root-vegetables' },
+        'root-vegetables': { name: 'Root Vegetables', slug: 'root-vegetables' }
+      };
+
+      const categoryInfo = validCategories[normalizedCategory];
+      
+      if (categoryInfo) {
+        categoryDoc = await Category.findOne({
+          $or: [
+            { slug: categoryInfo.slug },
+            { name: { $regex: new RegExp(`^${categoryInfo.name}$`, "i") } }
+          ]
+        });
+
+        if (!categoryDoc) {
+          try {
+            categoryDoc = await Category.create({
+              name: categoryInfo.name,
+              slug: categoryInfo.slug
+            });
+          } catch (createErr) {
+            if (createErr.code === 11000) {
+              categoryDoc = await Category.findOne({ slug: categoryInfo.slug });
+            } else {
+              return res.status(500).json({ 
+                message: "Failed to create category. Please try again." 
+              });
+            }
+          }
+        }
+      } else {
+        return res.status(400).json({ 
+          message: `Category not found. Please select a valid category from the dropdown.` 
+        });
+      }
+    }
+
+    if (!categoryDoc) {
+      return res.status(400).json({ 
+        message: `Category not found. Please select a valid category from the dropdown.` 
+      });
+    }
+
+    categoryId = categoryDoc._id;
+
     const product = await Product.create({
       seller: req.user.id,
       name,
-      category,
+      category: categoryId,
       unit,
       price,
       stock,
@@ -25,6 +101,10 @@ const createProduct = async (req, res) => {
     });
     res.status(201).json(product);
   } catch (err) {
+    if (err.name === "ValidationError") {
+      const errorMessages = Object.values(err.errors).map(e => e.message).join(", ");
+      return res.status(400).json({ message: `Product validation failed: ${errorMessages}` });
+    }
     res.status(500).json({ message: err.message });
   }
 };
