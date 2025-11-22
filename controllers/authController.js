@@ -32,8 +32,18 @@ const register = async (req, res) => {
 
     const hashed = await bcrypt.hash(password, 10);
 
+    // Extract selectedProducts if provided (for sellers)
+    const { selectedProducts, ...userData } = rest;
+    
     let user;
-    user = await User.create({ email, password: hashed, ...rest, role, ownerName });
+    const createData = { email, password: hashed, ...userData, role, ownerName };
+    
+    // Add selectedProducts if seller and products are provided
+    if (role === "seller" && selectedProducts && Array.isArray(selectedProducts)) {
+      createData.selectedProducts = selectedProducts;
+    }
+    
+    user = await User.create(createData);
 
 
 
@@ -63,7 +73,12 @@ const login = async (req, res) => {
     if (!ok) return res.status(400).json({ message: "Invalid credentials" });
 
     if (user.isSuspended) {
-      return res.status(403).json({ message: "Account suspended" });
+      return res.status(403).json({ message: "Your account is suspended" });
+    }
+
+    // Check if seller is approved
+    if (user.role === "seller" && !user.isApproved) {
+      return res.status(403).json({ message: "Your seller account is pending approval. Please wait for admin approval." });
     }
 
     // ROLE comes from user document
@@ -129,27 +144,82 @@ const forgotPassword = async (req, res) => {
     const user = await Model.findOne(query);
     if (!user) return res.status(400).json({ message: "User not found" });
 
-    const token = crypto.randomBytes(20).toString("hex");
+    // Generate 6-digit OTP (100000-999999)
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
-    user.resetPasswordToken = token;
-    user.resetPasswordExpire = Date.now() + 10 * 60 * 1000;
+    user.resetPasswordToken = otp;
+    user.resetPasswordExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
 
     await user.save();
 
-    res.json({ message: "Reset token generated", resetToken: token });
+    res.json({ 
+      message: "OTP generated successfully", 
+      otp: otp,
+      resetToken: otp // Keep for backward compatibility
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 };
 
 
-const resetPassword = async (req, res) => {
+const verifyOTP = async (req, res) => {
   try {
-    const { token } = req.params;
-    const { password, role } = req.body;
+    const { email, role, otp } = req.body;
 
     if (!role || !["buyer", "seller", "admin"].includes(role)) {
       return res.status(400).json({ message: "Invalid role" });
+    }
+
+    if (!otp || otp.length !== 6) {
+      return res.status(400).json({ message: "OTP must be 6 digits" });
+    }
+
+    const Model = role === "admin" ? Admin : User;
+    const query = role === "admin" ? { email } : { email, role };
+
+    const user = await Model.findOne(query);
+    if (!user) return res.status(400).json({ message: "User not found" });
+
+    if (user.resetPasswordToken !== otp) {
+      return res.status(400).json({ message: "Invalid OTP" });
+    }
+
+    if (user.resetPasswordExpire < Date.now()) {
+      return res.status(400).json({ message: "OTP has expired" });
+    }
+
+    // Return a verification token that can be used for password reset
+    const verificationToken = crypto.randomBytes(32).toString("hex");
+    user.resetPasswordToken = verificationToken;
+    user.resetPasswordExpire = Date.now() + 10 * 60 * 1000; // Extend for 10 more minutes
+
+    await user.save();
+
+    res.json({ 
+      message: "OTP verified successfully", 
+      token: verificationToken 
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+
+const resetPassword = async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { password, confirmPassword, role } = req.body;
+
+    if (!role || !["buyer", "seller", "admin"].includes(role)) {
+      return res.status(400).json({ message: "Invalid role" });
+    }
+
+    if (password !== confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match" });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ message: "Password must be at least 6 characters" });
     }
 
     const Model = role === "admin" ? Admin : User;
@@ -266,6 +336,7 @@ const updateProfile = async (req, res) => {
 
 
 module.exports = {
+  verifyOTP,
   register,
   login,
   createAdmin,

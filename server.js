@@ -10,6 +10,7 @@ const productroute = require("./routes/productroute");
 const orderRoute = require('./routes/orderroute');
 const adminroute = require('./routes/adminroute');
 const categoryRoute = require("./routes/categoryRoutes");
+const notificationRoute = require('./routes/notificationRoutes');
 
 const app = express();
 
@@ -25,7 +26,8 @@ app.use('/api', authroute);
 app.use('/api', productroute);
 app.use("/api", orderRoute);
 app.use('/api', adminroute);
-app.use("/api", categoryRoute); 
+app.use("/api", categoryRoute);
+app.use('/api', notificationRoute); 
 
 const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => {

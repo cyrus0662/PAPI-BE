@@ -3,7 +3,8 @@ const Order = require("../models/Order");
 const Admin = require("../models/Admin");
 const User = require("../models/User");
 const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken")
+const jwt = require("jsonwebtoken");
+const { notifySellerApproved, notifySellerSuspended, notifyProductApproved } = require("../utils/notificationHelper");
 
 
 const adminLogin = async (req, res) => {
@@ -43,6 +44,9 @@ const updateUser = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
+    const wasApproved = user.isApproved;
+    const wasSuspended = user.isSuspended;
+    
     if (user.role === "seller" && isApproved !== undefined) {
       user.isApproved = isApproved;
     }
@@ -62,6 +66,19 @@ const updateUser = async (req, res) => {
     });
 
     await user.save();
+
+    // Create notifications for seller status changes
+    if (user.role === "seller") {
+      if (isApproved !== undefined && isApproved !== wasApproved) {
+        if (isApproved) {
+          await notifySellerApproved(user._id);
+        }
+      }
+      if (isSuspended !== undefined && isSuspended !== wasSuspended) {
+        await notifySellerSuspended(user._id, isSuspended);
+      }
+    }
+
     res.json(user);
   } catch (error) {
     res.status(500).json({ message: error.message || "Failed to update user" });
@@ -133,6 +150,13 @@ const updateProductApproval = async (req, res) => {
       return res.status(400).json({ message: "isApproved field is required" });
     }
 
+    // Get product before update to check seller and name
+    const productBefore = await Product.findById(id);
+    
+    if (!productBefore) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
     const result = await Product.updateOne(
       { _id: id },
       { $set: { isApproved: Boolean(isApproved) } }
@@ -140,6 +164,47 @@ const updateProductApproval = async (req, res) => {
 
     if (result.matchedCount === 0) {
       return res.status(404).json({ message: "Product not found" });
+    }
+
+    // Create notification for product approval change
+    try {
+      // Get seller ID - handle both ObjectId and populated object
+      let sellerId = null;
+      if (productBefore.seller) {
+        // If seller is populated (object), use _id
+        if (typeof productBefore.seller === 'object' && productBefore.seller._id) {
+          sellerId = productBefore.seller._id;
+        } 
+        // If seller is just an ObjectId
+        else if (productBefore.seller.toString) {
+          sellerId = productBefore.seller;
+        }
+      }
+
+      if (sellerId) {
+        console.log('Creating notification for product approval:', {
+          sellerId: sellerId.toString(),
+          productId: id,
+          productName: productBefore.name,
+          isApproved: Boolean(isApproved)
+        });
+        const notification = await notifyProductApproved(
+          sellerId,
+          id,
+          productBefore.name,
+          Boolean(isApproved)
+        );
+        if (notification) {
+          console.log('Notification created successfully:', notification._id);
+        } else {
+          console.warn('Notification creation returned null');
+        }
+      } else {
+        console.warn('No seller found for product:', id, 'seller field:', productBefore.seller);
+      }
+    } catch (notifError) {
+      console.error('Error creating notification:', notifError);
+      // Don't fail the request if notification creation fails
     }
 
     try {
