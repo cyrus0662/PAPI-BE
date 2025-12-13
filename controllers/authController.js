@@ -310,14 +310,29 @@ const updateProfile = async (req, res) => {
 
     const allowedFields =
       req.user.role === "seller"
-        ? ["businessName", "ownerName", "address", "pincode", "phone", "organicCertificate", "logo"]
+        ? ["businessName", "ownerName", "address", "pincode", "phone", "organicCertificate", "logo", "additionalInfo", "sellerImages", "priceSheetPdf", "website", "documentDate"]
         : ["name", "phone", "address", "pincode"];
 
     allowedFields.forEach((field) => {
-      if (req.body[field] !== undefined && field !== "logo") {
+      if (req.body[field] !== undefined && field !== "logo" && field !== "sellerImages" && field !== "priceSheetPdf") {
         req.userDoc[field] = req.body[field];
       }
     });
+
+    // Handle sellerImages array
+    if (req.body.sellerImages !== undefined && req.user.role === "seller") {
+      req.userDoc.sellerImages = Array.isArray(req.body.sellerImages) ? req.body.sellerImages : [];
+    }
+
+    // Handle priceSheetPdf
+    if (req.body.priceSheetPdf !== undefined && req.user.role === "seller") {
+      req.userDoc.priceSheetPdf = req.body.priceSheetPdf;
+    }
+
+    // Handle documentDate
+    if (req.body.documentDate !== undefined && req.user.role === "seller") {
+      req.userDoc.documentDate = new Date(req.body.documentDate);
+    }
 
     if (req.file && req.user.role === "seller") {
       req.userDoc.logo = "/uploads/" + req.file.filename;
