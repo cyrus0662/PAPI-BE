@@ -54,6 +54,27 @@ const userSchema = new mongoose.Schema(
       type: String, // image URL
       default: null,
     },
+    // Additional seller registration fields
+    additionalInfo: {
+      type: String, // Optional info text seller can write
+      default: null,
+    },
+    sellerImages: {
+      type: [String], // Array of image URLs
+      default: [],
+    },
+    priceSheetPdf: {
+      type: String, // PDF URL
+      default: null,
+    },
+    website: {
+      type: String,
+      default: null,
+    },
+    documentDate: {
+      type: Date, // Date when documents/products/pricing were uploaded
+      default: null,
+    },
     
     // Selected products during registration
     selectedProducts: {

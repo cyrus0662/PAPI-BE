@@ -9,7 +9,8 @@ const productSchema = new mongoose.Schema({
   stock: { type: Number, default: 0 },
   description: { type: String },
   image: { type: String },
-  isApproved: { type: Boolean, default: true } // optional moderation
+  isApproved: { type: Boolean, default: true }, // optional moderation
+  effectiveDate: { type: Date, default: Date.now }, // Date when price/availability was set/updated
 }, { timestamps: true });
 
 const Product = mongoose.model("Product", productSchema);

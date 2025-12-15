@@ -5,7 +5,7 @@ const Category = require("../models/categoryModel");
 
 const createProduct = async (req, res) => {
   try {
-    const { name, category, unit, price, stock, description, image } = req.body;
+    const { name, category, unit, price, stock, description, image, effectiveDate } = req.body;
 
     // Allow both seller and admin to create products
     if (req.user.role !== "seller" && req.user.role !== "admin") {
@@ -103,7 +103,7 @@ const createProduct = async (req, res) => {
 
     // For admin-created products, set seller to admin's ID (admin acts as seller for these products)
     // For seller-created products, use seller's ID
-    const product = await Product.create({
+    const productData = {
       seller: req.user.id,
       name,
       category: categoryId,
@@ -114,7 +114,16 @@ const createProduct = async (req, res) => {
       image: imageUrl,
       // Admin-created products are auto-approved
       isApproved: req.user.role === "admin" ? true : undefined,
-    });
+    };
+
+    // Add effectiveDate if provided, otherwise use current date
+    if (effectiveDate) {
+      productData.effectiveDate = new Date(effectiveDate);
+    } else {
+      productData.effectiveDate = new Date();
+    }
+
+    const product = await Product.create(productData);
     res.status(201).json(product);
   } catch (err) {
     if (err.name === "ValidationError") {
@@ -129,7 +138,7 @@ const createProduct = async (req, res) => {
 const getSingleProduct = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id)
-      .populate("seller", "businessName ownerName name email phone")
+      .populate("seller", "businessName ownerName name email phone priceSheetPdf additionalInfo website logo sellerImages")
       .populate("category", "name");
 
     if (!product) {
@@ -141,6 +150,35 @@ const getSingleProduct = async (req, res) => {
                        product.seller?.ownerName || 
                        product.seller?.name || 
                        "Unknown";
+
+    // Build seller public info (exclude contact details like phone, email, address)
+    const sellerPublicInfo = {
+      name: sellerName,
+      businessName: product.seller?.businessName || null,
+      ownerName: product.seller?.ownerName || null,
+      priceSheetPdf: product.seller?.priceSheetPdf || null,
+      additionalInfo: product.seller?.additionalInfo || null,
+      website: product.seller?.website || null,
+      logo: product.seller?.logo || null,
+      sellerImages: product.seller?.sellerImages || [],
+    };
+
+    // Format price sheet PDF URL if it exists
+    if (sellerPublicInfo.priceSheetPdf && !sellerPublicInfo.priceSheetPdf.startsWith('http')) {
+      sellerPublicInfo.priceSheetPdf = `${req.protocol}://${req.get("host")}${sellerPublicInfo.priceSheetPdf}`;
+    }
+
+    // Format logo URL if it exists
+    if (sellerPublicInfo.logo && !sellerPublicInfo.logo.startsWith('http')) {
+      sellerPublicInfo.logo = `${req.protocol}://${req.get("host")}${sellerPublicInfo.logo}`;
+    }
+
+    // Format seller images URLs
+    if (sellerPublicInfo.sellerImages && Array.isArray(sellerPublicInfo.sellerImages)) {
+      sellerPublicInfo.sellerImages = sellerPublicInfo.sellerImages.map(img => 
+        img.startsWith('http') ? img : `${req.protocol}://${req.get("host")}${img}`
+      );
+    }
 
     // Response front-end friendly format
     const formattedProduct = {
@@ -159,12 +197,8 @@ const getSingleProduct = async (req, res) => {
         : null,
       sellerName: sellerName,
       sellerId: product.seller?._id || product.seller,
-      seller: {
-        name: sellerName,
-        owner: product.seller?.ownerName,
-        email: product.seller?.email,
-        businessName: product.seller?.businessName,
-      },
+      seller: sellerPublicInfo,
+      effectiveDate: product.effectiveDate || product.createdAt,
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,
     };
@@ -194,8 +228,16 @@ const updateProduct = async (req, res) => {
     if (!product) return res.status(404).json({ message: "Product not found" });
     
     // Update all fields from req.body except image (handle separately)
-    const { image, ...otherFields } = req.body;
+    const { image, effectiveDate, ...otherFields } = req.body;
     Object.assign(product, otherFields);
+    
+    // Handle effectiveDate separately to ensure it's a Date object
+    if (effectiveDate) {
+      product.effectiveDate = new Date(effectiveDate);
+    } else {
+      // If not provided, update to current date
+      product.effectiveDate = new Date();
+    }
     
     // Handle image: priority is file upload, then Cloudinary URL from body
     if (req.file) {
@@ -241,12 +283,37 @@ const getAllProducts = async (req, res) => {
     }
 
     let prods = await Product.find(filter)
-      .populate("seller", "businessName ownerName name email _id phone")
+      .populate("seller", "businessName ownerName name email _id phone priceSheetPdf additionalInfo website logo sellerImages")
       .populate("category", "name");
 
     // Fix: Build card-compatible response
     const finalProducts = prods.map(p => {
       const sellerName = p.seller?.businessName || p.seller?.ownerName || p.seller?.name || "Unknown";
+      
+      // Build seller public info (exclude contact details)
+      const sellerPublicInfo = p.seller ? {
+        name: sellerName,
+        businessName: p.seller.businessName || null,
+        ownerName: p.seller.ownerName || null,
+        priceSheetPdf: p.seller.priceSheetPdf 
+          ? (p.seller.priceSheetPdf.startsWith('http') 
+              ? p.seller.priceSheetPdf 
+              : `${req.protocol}://${req.get("host")}${p.seller.priceSheetPdf}`)
+          : null,
+        additionalInfo: p.seller.additionalInfo || null,
+        website: p.seller.website || null,
+        logo: p.seller.logo 
+          ? (p.seller.logo.startsWith('http') 
+              ? p.seller.logo 
+              : `${req.protocol}://${req.get("host")}${p.seller.logo}`)
+          : null,
+        sellerImages: p.seller.sellerImages && Array.isArray(p.seller.sellerImages)
+          ? p.seller.sellerImages.map(img => 
+              img.startsWith('http') ? img : `${req.protocol}://${req.get("host")}${img}`
+            )
+          : [],
+      } : null;
+
       return {
         id: p.id,
         name: p.name,
@@ -262,7 +329,8 @@ const getAllProducts = async (req, res) => {
               : `${req.protocol}://${req.get("host")}${p.image}`)
           : null,
         sellerName: sellerName,
-        sellerId: p.seller?._id
+        sellerId: p.seller?._id,
+        seller: sellerPublicInfo,
       };
     });
 
@@ -315,11 +383,36 @@ const getProductsByCategory = async (req, res) => {
     }
 
     const products = await Product.find({ category, isApproved: true })
-      .populate("seller", "businessName ownerName name email _id phone");
+      .populate("seller", "businessName ownerName name email _id phone priceSheetPdf additionalInfo website logo sellerImages");
 
     // Format products to match frontend expectations
     const formattedProducts = products.map(p => {
       const sellerName = p.seller?.businessName || p.seller?.ownerName || p.seller?.name || "Unknown";
+      
+      // Build seller public info (exclude contact details)
+      const sellerPublicInfo = p.seller ? {
+        name: sellerName,
+        businessName: p.seller.businessName || null,
+        ownerName: p.seller.ownerName || null,
+        priceSheetPdf: p.seller.priceSheetPdf 
+          ? (p.seller.priceSheetPdf.startsWith('http') 
+              ? p.seller.priceSheetPdf 
+              : `${req.protocol}://${req.get("host")}${p.seller.priceSheetPdf}`)
+          : null,
+        additionalInfo: p.seller.additionalInfo || null,
+        website: p.seller.website || null,
+        logo: p.seller.logo 
+          ? (p.seller.logo.startsWith('http') 
+              ? p.seller.logo 
+              : `${req.protocol}://${req.get("host")}${p.seller.logo}`)
+          : null,
+        sellerImages: p.seller.sellerImages && Array.isArray(p.seller.sellerImages)
+          ? p.seller.sellerImages.map(img => 
+              img.startsWith('http') ? img : `${req.protocol}://${req.get("host")}${img}`
+            )
+          : [],
+      } : null;
+
       return {
         id: p.id,
         _id: p._id,
@@ -335,7 +428,8 @@ const getProductsByCategory = async (req, res) => {
               : `${req.protocol}://${req.get("host")}${p.image}`)
           : null,
         sellerName: sellerName,
-        sellerId: p.seller?._id
+        sellerId: p.seller?._id,
+        seller: sellerPublicInfo,
       };
     });
 
